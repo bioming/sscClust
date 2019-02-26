@@ -74,7 +74,7 @@ ssc.build <- function(x,display.name=NULL,assay.name="exprs")
 #' @importFrom stats sd
 #' @importFrom scran trendVar decomposeVar
 #' @param obj object of SingleCellExperiment
-#' @param method method to be used, can be one of "sd", mean.sd, trendVar. (default: "sd")
+#' @param method method to be used, can be one of "HVG.sd", "HVG.mean.sd", "HVG.trendVar". (default: "HVG.sd")
 #' @param sd.n top number of genes (default 1500)
 #' @param mean.thre numeric; threshold for mean, used in trendVar method (default 0.1)
 #' @param fdr.thre numeric; threshold for fdr, used in trendVar method (default 0.001)
@@ -88,24 +88,26 @@ ssc.build <- function(x,display.name=NULL,assay.name="exprs")
 #' when using "trendVar", will use expression data stored in "norm_exprs" slot of `obj`, no matter what `assay.name` is.
 #' @return an object of \code{SingleCellExperiment} class
 #' @export
-ssc.variableGene <- function(obj,method="sd",sd.n=1500,mean.thre=0.1,fdr.thre=0.001,assay.name="exprs",
+ssc.variableGene <- function(obj,method="HVG.sd",sd.n=1500,mean.thre=0.1,fdr.thre=0.001,assay.name="exprs",
                              var.block=NULL,
                              reuse=F,out.prefix=NULL)
 {
-  if(method=="sd")
+  if(method=="HVG.sd")
   {
-    if(!reuse || is.null(metadata(obj)$ssc[["variable.gene"]][["sd"]])){
-      row.sd <- apply(assay(obj,assay.name),1,sd)
-      metadata(obj)$ssc[["variable.gene"]][["sd"]] <- names(head(row.sd[order(row.sd,decreasing = T)],n=sd.n))
+    ###if(!reuse || is.null(metadata(obj)$ssc[["variable.gene"]][["sd"]])){
+    if(!reuse || !("HVG.sd" %in% colnames(rowData(obj))) ){
+      rowData(obj)[,"row.sd"] <- apply(assay(obj,assay.name),1,sd)
+      rowData(obj)[,"HVG.sd"]  <- rownames(obj) %in% names(head(sort(rowData(obj)[,"row.sd"],decreasing = T),n=sd.n))
     }
-  }else if(method=="mean.sd")
+  }else if(method=="HVG.mean.sd")
   {
-    if(!reuse || is.null(metadata(obj)$ssc[["variable.gene"]][["mean.sd"]])){
-      row.sd <- apply(assay(obj,assay.name),1,sd)
-      row.mean <- apply(assay(obj,assay.name),1,mean)
-      info.gene.sd <- row.sd[row.sd>1 & row.mean>1]
+    if(!reuse || !("HVG.mean.sd" %in% colnames(rowData(obj))) ){
+      rowData(obj)[,"row.sd"] <- apply(assay(obj,assay.name),1,sd)
+      rowData(obj)[,"row.mean"] <- apply(assay(obj,assay.name),1,mean)
+      f.gene <- rowData(obj)[,"row.sd"]>1 & rowData(obj)[,"row.mean"]>1
+      info.gene.sd <- rowData(obj)[f.gene,"row.sd"]
       info.gene.sd <- sort(info.gene.sd,decreasing = T)
-      metadata(obj)$ssc[["variable.gene"]][["mean.sd"]] <- names(head(info.gene.sd,n=sd.n))
+      rowData(obj)[,"HVG.mean.sd"] <- rownames(obj) %in% names(head(info.gene.sd,n=sd.n))
     }
   }else if(method=="trendVar")
   {
@@ -123,7 +125,7 @@ ssc.variableGene <- function(obj,method="sd",sd.n=1500,mean.thre=0.1,fdr.thre=0.
     ####var.out <- scran::decomposeVar(obj, var.fit, assay.type=assay.name)
     var.out <- var.out[order(var.out$FDR,-var.out$bio/var.out$total),]
     f.var <- var.out$FDR<fdr.thre & var.out$mean>mean.thre
-    metadata(obj)$ssc[["variable.gene"]][["trendVar"]] <- rownames(var.out)[f.var]
+    rowData(obj)[["trendVar"]] <- rownames(obj) %in% rownames(var.out)[f.var]
     metadata(obj)$ssc[["variable.gene"]][["trendVar.detail"]] <- var.out
     #head(var.out)
     ### debug
@@ -259,6 +261,7 @@ ssc.assay.hclust <- function(obj,assay.name="exprs",
 #' @param obj object of \code{singleCellExperiment} class
 #' @param columns.order character; columns of colData(obj) used for ordering (default: NULL)
 #' @param gene.desc data.frame; it must contain columns geneID and Group (default: NULL)
+#' @importFrom BiocGenerics rbind
 #' @export
 ssc.order <- function(obj,columns.order=NULL,gene.desc=NULL)
 {
@@ -271,7 +274,7 @@ ssc.order <- function(obj,columns.order=NULL,gene.desc=NULL)
             if(is.null(obj.tmp)){
                 obj.tmp <- obj[g.desc$geneID,]
             }else{
-                obj.tmp <- rbind(obj.tmp,obj[g.desc$geneID,])
+                obj.tmp <- BiocGenerics::rbind(obj.tmp,obj[g.desc$geneID,])
             }
         }
         obj <- obj.tmp
@@ -356,7 +359,7 @@ ssc.assay.zscore <- function(obj,assay.name="exprs",assay.new=NULL,covar="patien
         dat.plot.z[dat.plot.z < z.lo] <- z.lo
         dat.plot.z[dat.plot.z > z.hi] <- z.hi
     }
-    assay(obj,if(is.null(assay.new)) sprintf("%s.z",assay.name) else assay.new) <- dat.plot.z
+    assay(obj,if(is.null(assay.new)) sprintf("%s.z",assay.name) else assay.new) <- dat.plot.z[,colnames(obj)]
     return(obj)
 }
 
@@ -367,10 +370,12 @@ ssc.assay.zscore <- function(obj,assay.name="exprs",assay.new=NULL,covar="patien
 #' @importFrom SingleCellExperiment reducedDim
 #' @importFrom stats cor prcomp
 #' @importFrom BiocGenerics t
+#' @importFrom uwot umap
 #' @param obj object of \code{singleCellExperiment} class
 #' @param assay.name character; which assay (default: "exprs")
 #' @param method character; method to be used for dimension reduction, should be one of (pca, tsne, iCor, zinbwave). (default: "iCor")
 #' @param method.vgene character; method to identify variable genes. (default: sd)
+#' @param method.tsne character; method to run tsne, one of "Rtsne", "FIt-SNE". (default: "Rtsne")
 #' @param pca.npc integer; number of pc be used. Only for reduction method "pca". (default: NULL)
 #' @param tSNE.usePCA logical; whether use PCA before tSNE. Only for reduction method "tsne". (default: T)
 #' @param tSNE.perplexity logical; perplexity parameter. Used in all Rtsne() calling. (default: 30)
@@ -384,6 +389,7 @@ ssc.assay.zscore <- function(obj,assay.name="exprs",assay.new=NULL,covar="patien
 #' @param zinbwave.X character, zinbwave parameter, cell-level covariates. (default: "~patient")
 #' @param reuse logical; don't calculate if the query is already available. (default: F)
 #' @param seed integer; seed of random number generation. (default: NULL)
+#' @param out.prefix character; output prefix (default: NULL)
 #' @param ncore integer; nuber of CPU cores to use. if NULL, automatically detect the number. (default: NULL)
 #' @details If the reduction method is "pca", the function will call prcomp() and estimate the number of top PC should be used
 #' in downstream analysis using and "elbow" based method, then the samples coordinates in the space spaned by the top PC would
@@ -400,7 +406,8 @@ ssc.assay.zscore <- function(obj,assay.name="exprs",assay.new=NULL,covar="patien
 #' @export
 ssc.reduceDim <- function(obj,assay.name="exprs",
                           method="iCor",
-                          method.vgene="sd",
+                          method.vgene="HVG.sd",
+                          method.tsne="Rtsne",
                           pca.npc=NULL,
                           tSNE.usePCA=T,
                           tSNE.perplexity=30,
@@ -408,7 +415,7 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
                           autoTSNE=T,
                           dim.name=NULL,
                           iCor.niter=1,iCor.method="spearman",
-                          reuse=F,ncore=NULL,seed=NULL)
+                          reuse=F,ncore=NULL,seed=NULL,out.prefix=NULL)
 {
   row.sd <- apply(assay(obj,assay.name),1,sd)
   col.sd <- apply(assay(obj,assay.name),2,sd)
@@ -418,12 +425,11 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
                     paste(head(colnames(obj)[col.zero]),collapse = ",")))
   }
   obj <- obj[row.sd>0,]
-  if(!method.vgene %in% names(metadata(obj)$ssc[["variable.gene"]])){
+  if(!method.vgene %in% colnames(rowData(obj)) ){
     stop(sprintf("No variable genes identified by method %s !",method.vgene))
   }
   if(is.null(dim.name)){ dim.name <- method }
-  vgene <- metadata(obj)$ssc[["variable.gene"]][[method.vgene]]
-  vgene <- intersect(vgene,rownames(obj))
+  vgene <- rowData(obj)[[method.vgene]]
   if(!reuse || !(dim.name %in% reducedDimNames(obj)) ){
     if(is.null(seed)){
       myseed <- as.integer(Sys.time())
@@ -436,8 +442,8 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
     if(method=="pca"){
         pca.res <- prcomp(BiocGenerics::t(assay(obj[vgene,],assay.name)))
         ### find elbow point and get number of components to be used
-        pca.res$eigenv.prop <- pca.res$sdev/sum(pca.res$sdev)
-        pca.res$eigengap <- sapply(seq_len(length(pca.res$eigenv.prop)-1),function(i){ pca.res$eigenv.prop[i]-pca.res$eigenv.prop[i+1] })
+        pca.res$eigenv.prop <- (pca.res$sdev^2)/sum(pca.res$sdev^2)
+        pca.res$eigengap <- pca.res$eigenv.prop[-length(pca.res$eigenv.prop)]-pca.res$eigenv.prop[-1]
         ### method 1
         ######pca.res$kneePts <- which(pca.res$eigengap<1e-4)[1]
         ### method 2 (max distance to the line defined by the first and last point in the scree plot)
@@ -453,9 +459,16 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
         ### save to object
         metadata(obj)$ssc$pca.res <- pca.res
         proj_data <- pca.res$x[,1:pca.npc,drop=F]
-        if(autoTSNE){ reducedDim(obj,sprintf("%s.tsne",dim.name)) <- run.tSNE(proj_data,tSNE.usePCA=F,tSNE.perplexity) }
+        if(autoTSNE){
+            reducedDim(obj,sprintf("%s.tsne",dim.name)) <-
+                run.tSNE(proj_data,tSNE.usePCA=F,tSNE.perplexity,
+                         out.prefix=out.prefix,n.cores=ncore,method=method.tsne)
+        }
     }else if(method=="tsne"){
-      proj_data <- run.tSNE(BiocGenerics::t(assay(obj[vgene,],assay.name)),tSNE.usePCA,tSNE.perplexity)
+      proj_data <- run.tSNE(BiocGenerics::t(assay(obj[vgene,],assay.name)),tSNE.usePCA,tSNE.perplexity,
+                            out.prefix=out.prefix,n.cores=ncore,method=method.tsne)
+    }else if(method=="umap"){
+        proj_data <- umap(BiocGenerics::t(assay(obj[vgene,],assay.name)), init = "spca",pca=50,n_threads = ncore)
     }else if(method=="iCor"){
       proj_data <- as.matrix(assay(obj[vgene,],assay.name))
       while(iCor.niter>0){
@@ -463,13 +476,20 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
         proj_data <- cor.BLAS(t(proj_data),method=iCor.method,nthreads = ncore)
         iCor.niter <- iCor.niter-1
       }
-      if(autoTSNE) { reducedDim(obj,sprintf("%s.tsne",dim.name)) <- run.tSNE(proj_data,tSNE.usePCA=F,tSNE.perplexity) }
+      if(autoTSNE) { reducedDim(obj,sprintf("%s.tsne",dim.name)) <-
+          run.tSNE(proj_data,tSNE.usePCA=F,tSNE.perplexity,out.prefix=out.prefix,
+                   n.cores=ncore,method=method.tsne)
+      }
     }else if(method=="zinbwave"){
       res.zinb <- run.zinbWave(obj,assay.name=assay.name,vgene=vgene,n.cores=ncore,
                                zinbwave.K=zinbwave.K, zinbwave.X=zinbwave.X,verbose=F)
       proj_data <- getW(res.zinb)
       colnames(proj_data) <- sprintf("W%d",seq_len(ncol(proj_data)))
-      if(autoTSNE) { reducedDim(obj,sprintf("%s.tsne",dim.name)) <- run.tSNE(proj_data,tSNE.usePCA=F,tSNE.perplexity) }
+      if(autoTSNE) {
+          reducedDim(obj,sprintf("%s.tsne",dim.name)) <-
+              run.tSNE(proj_data,tSNE.usePCA=F,tSNE.perplexity,out.prefix=out.prefix,
+                       n.cores=ncore,method=method.tsne)
+      }
     }
     reducedDim(obj,dim.name) <- proj_data
   }
@@ -493,7 +513,7 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
 #' "iCor", "pca" and "none". (default: "iCor")
 #' @param method character; clustering method to be used, should be one of "kmeans", "hclust", "SNN", "dpclust", "adpclust" and "SC3". (default: "kmeans")
 #' @param k.batch integer; number of clusters to be evaluated. (default: 2:6)
-#' @param method.vgene character; variable gene identification method used. (default: "sd")
+#' @param method.vgene character; variable gene identification method used. (default: "HVG.sd")
 #' @param SNN.k integer; number of shared NN. (default: 10)
 #' @param SNN.method character; cluster method applied on SNN， one of "greedy", "eigen", "infomap",
 #' "prop", "louvain", "optimal", "spinglass", "walktrap", "betweenness". (default: "eigen")
@@ -514,7 +534,7 @@ ssc.reduceDim <- function(obj,assay.name="exprs",
 #' @export
 ssc.clust <- function(obj, assay.name="exprs", method.reduction="iCor",
                       method="kmeans", k.batch=2:6,
-                      method.vgene="sd",
+                      method.vgene="HVG.sd",
                       SNN.k=10,SNN.method="eigen",
                       SC3.biology=T,SC3.markerplot.width=15,
                       dpclust.rho=NULL,dpclust.delta=NULL,
@@ -526,7 +546,7 @@ ssc.clust <- function(obj, assay.name="exprs", method.reduction="iCor",
   ### check transformed data
   if(method.reduction=="none"){
     warning(sprintf("The dimention reduction should be performed!"))
-    vgene <- metadata(obj)$ssc[["variable.gene"]][[method.vgene]]
+    vgene <- rowData(obj)[[method.vgene]]
     dat.transformed <- t(assay(obj[vgene,],assay.name))
   }else if( (!method.reduction %in% reducedDimNames(obj)) ){
     dat.transformed <- NULL
@@ -645,7 +665,8 @@ ssc.clust <- function(obj, assay.name="exprs", method.reduction="iCor",
     colData(obj)[,sprintf("%s.%s.k%s",method.reduction,method,k)] <- sprintf("C%d",clust.res$membership)
     res.list[[as.character(k)]] <- clust.res
   }else if(method=="SC3"){
-    vgene <- metadata(obj)$ssc[["variable.gene"]][[method.vgene]]
+    ##vgene <- metadata(obj)$ssc[["variable.gene"]][[method.vgene]]
+    vgene <- rowData(obj)[[method.vgene]]
     obj.tmp <- run.SC3(obj[vgene,],assay.name = assay.name,out.prefix=out.prefix,n.cores = ncore,ks=k.batch,
                        SC3.biology=SC3.biology,SC3.markerplot.width=SC3.markerplot.width)
     colData(obj) <- colData(obj.tmp)
@@ -698,7 +719,7 @@ ssc.clust <- function(obj, assay.name="exprs", method.reduction="iCor",
 #' @param obj object of \code{singleCellExperiment} class
 #' @param assay.name character; which assay (default: "exprs")
 #' @param frac numeric; subsample to frac of original samples. (default: 0.4)
-#' @param method.vgene character; variable gene identification method used. (default: "sd")
+#' @param method.vgene character; variable gene identification method used. (default: "HVG.sd")
 #' @param method.reduction character; which dimention reduction method to be used, should be one of
 #' "iCor", "pca" and "none". (default: "iCor")
 #' @param method.clust character; clustering method to be used, should be one of "kmeans" and "hclust". (default: "kmeans")
@@ -720,7 +741,7 @@ ssc.clust <- function(obj, assay.name="exprs", method.reduction="iCor",
 #' @export
 ssc.clustSubsamplingClassification <- function(obj, assay.name="exprs",
                                                frac=0.4,
-                                               method.vgene="sd",
+                                               method.vgene="HVG.sd",
                                                method.reduction="iCor",
                                                method.clust="kmeans",
                                                method.classify="knn",
@@ -747,10 +768,10 @@ ssc.clustSubsamplingClassification <- function(obj, assay.name="exprs",
   f.sd0 <- (apply(assay(obj.train,assay.name),1,sd)==0 | apply(assay(obj.pred,assay.name),1,sd)==0)
   obj.train <- obj.train[!f.sd0,]
   obj.pred <- obj.pred[!f.sd0,]
-  metadata(obj.train)$ssc[["variable.gene"]][[method.vgene]] <- intersect(metadata(obj.train)$ssc[["variable.gene"]][[method.vgene]],
-                                                                        rownames(obj.train))
-  metadata(obj.pred)$ssc[["variable.gene"]][[method.vgene]] <- intersect(metadata(obj.pred)$ssc[["variable.gene"]][[method.vgene]],
-                                                                         rownames(obj.pred))
+  #metadata(obj.train)$ssc[["variable.gene"]][[method.vgene]] <- intersect(metadata(obj.train)$ssc[["variable.gene"]][[method.vgene]],
+  #                                                                      rownames(obj.train))
+  #metadata(obj.pred)$ssc[["variable.gene"]][[method.vgene]] <- intersect(metadata(obj.pred)$ssc[["variable.gene"]][[method.vgene]],
+  #                                                                       rownames(obj.pred))
 
   reducedDims(obj.train) <- SimpleList()
   #### reduction
@@ -766,7 +787,8 @@ ssc.clustSubsamplingClassification <- function(obj, assay.name="exprs",
     if(!all(rownames(obj.train)==rownames(obj.pred))){
       stop("The genes of obj.train and obj.pred are different!")
     }
-    vgene <- metadata(obj.pred)$ssc$variable.gene[[method.vgene]]
+    #vgene <- metadata(obj.pred)$ssc$variable.gene[[method.vgene]]
+    vgene <- rowData(obj.pred)[[method.vgene]]
 
     if(method.reduction=="iCor"){
       loginfo(sprintf("begin A=cor.BLAS() ..."))
@@ -865,11 +887,13 @@ ssc.clustSubsamplingClassification <- function(obj, assay.name="exprs",
 #' "iCor", "pca", "zinbwave" and "none". (default: "iCor")
 #' @param method.clust character; clustering method to be used, should be one of "kmeans", "hclust", "SNN", "adpclust" and "SC3. (default: "kmeans")
 #' @param method.classify character; method used for classification, one of "knn" and "RF". (default: "knn")
+#' @param method.tsne character; method to run tsne, one of "Rtsne", "FIt-SNE". (default: "Rtsne")
 #' @param pca.npc integer; number of pc be used. Only for reduction method "pca". (default: NULL)
 #' @param iCor.niter integer; number of iteration of calculating the correlation. Used in reduction method "iCor". (default: 1)
 #' @param iCor.method character; correlation method, one of "spearman", "pearson" (default: "spearman")
 #' @param zinbwave.K integer, zinbwave parameter, number of latent variables. (default: 20)
 #' @param zinbwave.X character, zinbwave parameter, cell-level covariates. (default: "~patient")
+#' @param tSNE.perplexity double, perplexity parameter of tSNE. (default: 30)
 #' @param subsampling logical; whether cluster using the subsampling->cluster->classification method. (default: F)
 #' @param sub.frac numeric; subsample to frac of original samples. (default: 0.4)
 #' @param sub.use.proj logical; whether use the projected data for classification. (default: T)
@@ -894,7 +918,7 @@ ssc.clustSubsamplingClassification <- function(obj, assay.name="exprs",
 #' @return an object of \code{SingleCellExperiment} class with cluster labels added.
 #' @export
 ssc.run <- function(obj, assay.name="exprs",
-                    method.vgene="sd",
+                    method.vgene="HVG.sd",
                     sd.n=1500,
                     mean.thre=0.1,
                     fdr.thre=0.001,
@@ -902,10 +926,12 @@ ssc.run <- function(obj, assay.name="exprs",
                     method.reduction="iCor",
                     method.clust="kmeans",
                     method.classify="knn",
+                    method.tsne="Rtsne",
                     pca.npc=NULL,
                     iCor.niter=1,
                     iCor.method="spearman",
                     zinbwave.K=20, zinbwave.X="~patient",
+                    tSNE.perplexity=30,
                     subsampling=F,
                     sub.frac=0.4,
                     sub.use.proj=T,
@@ -929,8 +955,6 @@ ssc.run <- function(obj, assay.name="exprs",
   if(is.null(rownames(obj))){
     stop("rownames of obj is NULL!!!")
   }
-  #rid <- "11"
-  #obj <- ssc.variableGene(obj,method=method.vgene,sd.n=sd.n,assay.name=assay.name)
   if(!subsampling){
     if(!is.null(parfile) && file.exists(parfile)){
       source(parfile)
@@ -960,28 +984,35 @@ ssc.run <- function(obj, assay.name="exprs",
                            iCor.method = iCor.method,
                            zinbwave.K = zinbwave.K, zinbwave.X = zinbwave.X,
                            method.vgene=method.vgene,
+                           method.tsne=method.tsne,tSNE.perplexity=tSNE.perplexity,
                            ncore = ncore,
                            seed = seed,
                            reuse = reuse)
       loginfo(sprintf("clustering ... (%s)",rid))
       obj <- ssc.clust(obj, assay.name=assay.name,
-                       method.reduction=if(method.clust %in% c("adpclust","dpclust")) sprintf("%s.tsne",method.reduction) else method.reduction,
+                       method.reduction=if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap") sprintf("%s.tsne",method.reduction) else method.reduction,
                        method=method.clust, k.batch=k.batch,
                        out.prefix = if(is.null(out.prefix)) NULL else sprintf("%s.%s",out.prefix,rid),
                        seed = seed,
                        method.vgene=method.vgene, parlist = parlist.rid, ...)
 
       .xlabel <- NULL
-      if(method.clust %in% c("adpclust","dpclust")){
+      if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap"){
         .xlabel <- sprintf("%s.tsne.%s.kauto",method.reduction,method.clust)
-      }else if(method.clust=="SNN"){
+      ##}else if(method.clust=="SNN"){
+      }else{
         .xlabel <- sprintf("%s.%s.kauto",method.reduction,method.clust)
       }
       if(!is.null(out.prefix) && !is.null(.xlabel)){
         ssc.plot.tsne(obj,columns = c(.xlabel),
-                      reduced.name = if(method.clust %in% c("adpclust","dpclust")) sprintf("%s.tsne",method.reduction) else method.reduction,
+                      reduced.name = if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap") sprintf("%s.tsne",method.reduction) else method.reduction,
                       out.prefix = sprintf("%s.%s",out.prefix,rid),
                       base_aspect_ratio = 1.4)
+        if(method.reduction=="pca"){
+            pdf(sprintf("%s.%s.pca.00.pdf",out.prefix,rid),width = 8,height = 6)
+            ssc.plot.pca(obj)
+            dev.off()
+        }
       }
       ### other method need determine the best k. not implemented yet.
       if(refineGene && method.clust %in% c("adpclust","dpclust","SNN")){
@@ -1003,41 +1034,49 @@ ssc.run <- function(obj, assay.name="exprs",
                                      n.cores = ncore,
                                      HSD.FC.THRESHOLD = HSD.FC.THRESHOLD,
                                      gid.mapping = rowData(obj)[,"display.name"])
-          if(!is.null(de.out) && nrow(de.out$aov.out.sig)>30){
+          if(!is.null(de.out) && nrow(de.out$aov.out.sig)>30)
+          {
             metadata(obj)$ssc[["de.res"]][[rid]] <- de.out
-            metadata(obj)$ssc[["variable.gene"]][["refine.de"]] <- head(de.out$aov.out.sig$geneID,n=de.n)
+            #metadata(obj)$ssc[["variable.gene"]][["refine.de"]] <- head(de.out$aov.out.sig$geneID,n=de.n)
+            rowData(obj)[,"HVG.refine.de"]  <- rownames(obj) %in% head(de.out$aov.out.sig$geneID,n=de.n)
             loginfo(sprintf("reduce dimensions using DE genes ... (%s)",rid))
             obj <- ssc.reduceDim(obj,assay.name=assay.name,
                          method=method.reduction,
+                         method.tsne=method.tsne,
                          pca.npc = pca.npc,
                          iCor.niter = iCor.niter,
                          iCor.method = iCor.method,
                          zinbwave.K = zinbwave.K, zinbwave.X = zinbwave.X,
+                         tSNE.perplexity=tSNE.perplexity,
                          ncore = ncore,
                          seed = seed,
                          dim.name = sprintf("de.%s",method.reduction),
-                         method.vgene="refine.de",reuse = reuse)
+                         method.vgene="HVG.refine.de",reuse = reuse)
             loginfo(sprintf("clust using DE genes ... (%s)",rid))
             obj <- ssc.clust(obj, assay.name=assay.name,
-                             method.reduction=if(method.clust %in% c("adpclust","dpclust")) sprintf("de.%s.tsne",method.reduction) else sprintf("de.%s",method.reduction),
-                             ##method.reduction=if(method.clust %in% c("adpclust","dpclust")) sprintf("%s.tsne",method.reduction) else method.reduction,
+                             method.reduction=if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap") sprintf("de.%s.tsne",method.reduction) else sprintf("de.%s",method.reduction),
                              method=method.clust, k.batch=k.batch,
                              seed = seed,
                              out.prefix = if(is.null(out.prefix)) NULL else sprintf("%s.%s.refineG",out.prefix,rid),
-                             method.vgene="refine.de", parlist = parlist.rid, ...)
+                             method.vgene="HVG.refine.de", parlist = parlist.rid, ...)
 
-            if(method.clust %in% c("adpclust","dpclust")){
+            if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap"){
               colData(obj)[,.xlabel] <- colData(obj)[,sprintf("de.%s.tsne.%s.kauto",method.reduction,method.clust)]
               colData(obj)[,sprintf("de.%s.tsne.%s.kauto",method.reduction,method.clust)] <- NULL
-            }else if(method.clust=="SNN"){
+            }else{
               colData(obj)[,.xlabel] <- colData(obj)[,sprintf("de.%s.%s.kauto",method.reduction,method.clust)]
               colData(obj)[,sprintf("de.%s.%s.kauto",method.reduction,method.clust)] <- NULL
             }
             if(!is.null(out.prefix) && !is.null(.xlabel)){
               ssc.plot.tsne(obj,columns = c(.xlabel),
-                            reduced.name = if(method.clust %in% c("adpclust","dpclust")) sprintf("de.%s.tsne",method.reduction) else sprintf("de.%s",method.reduction),
+                            reduced.name = if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap") sprintf("de.%s.tsne",method.reduction) else sprintf("de.%s",method.reduction),
                             out.prefix = sprintf("%s.%s.refineG",out.prefix,rid),
                             base_aspect_ratio = 1.4)
+              if(method.reduction=="pca"){
+                pdf(sprintf("%s.%s.refineG.pca.00.pdf",out.prefix,rid),width = 8,height = 6)
+                ssc.plot.pca(obj)
+                dev.off()
+              }
             }
           }else{
             warning("The number of DE genes is less than 30, NO second round clustering using DE genes will be performed!!")
@@ -1045,7 +1084,7 @@ ssc.run <- function(obj, assay.name="exprs",
         }
       }
       if(level<nIter){
-        clustLabel <- if(method.clust %in% c("adpclust","dpclust")) sprintf("%s.tsne.%s.kauto",method.reduction,method.clust) else sprintf("%s.%s.kauto",method.reduction,method.clust)
+        clustLabel <- if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap") sprintf("%s.tsne.%s.kauto",method.reduction,method.clust) else sprintf("%s.%s.kauto",method.reduction,method.clust)
         if(clustLabel %in% colnames(colData(obj))){
           clusterNames <- sort(unique(colData(obj)[,clustLabel]))
           for(cls in clusterNames){
@@ -1073,9 +1112,9 @@ ssc.run <- function(obj, assay.name="exprs",
     obj <- runOneIter(obj,"L1C1",k.batch = k.batch)
     if(do.DE && method.clust %in% c("adpclust","dpclust","SNN")){
       .xlabel <- NULL
-      if(method.clust %in% c("adpclust","dpclust")){
+      if(method.clust %in% c("adpclust","dpclust") && method.reduction!="umap"){
         .xlabel <- colData(obj)[,sprintf("%s.tsne.%s.kauto",method.reduction,method.clust)]
-      }else if(method.clust=="SNN"){
+      }else{
         .xlabel <- colData(obj)[,sprintf("%s.%s.kauto",method.reduction,method.clust)]
       }
       de.out <- findDEGenesByAOV(xdata = assay(obj,assay.name),
@@ -1083,11 +1122,12 @@ ssc.run <- function(obj, assay.name="exprs",
                                  HSD.FC.THRESHOLD = HSD.FC.THRESHOLD,
                                  gid.mapping = rowData(obj)[,"display.name"])
       metadata(obj)$ssc[["de.res"]][["L1C1"]] <- de.out
-      metadata(obj)$ssc[["variable.gene"]][["de"]] <- head(de.out$aov.out.sig$geneID,n=sd.n)
+      #metadata(obj)$ssc[["variable.gene"]][["de"]] <- head(de.out$aov.out.sig$geneID,n=sd.n)
+      rowData(obj)[,"HVG.de"]  <- rownames(obj) %in% head(de.out$aov.out.sig$geneID,n=sd.n)
       ### for general visualization
-      obj <- ssc.reduceDim(obj,assay.name=assay.name, method="tsne",
-                           zinbwave.K = zinbwave.K, zinbwave.X = zinbwave.X,
-                           method.vgene="de",dim.name = sprintf("vis.tsne"))
+      obj <- ssc.reduceDim(obj,assay.name=assay.name, method="tsne",method.tsne=method.tsne,
+                           zinbwave.K = zinbwave.K, zinbwave.X = zinbwave.X,tSNE.perplexity=tSNE.perplexity,
+                           method.vgene="HVG.de",dim.name = sprintf("vis.tsne"))
     }
   }else{
     obj <- ssc.variableGene(obj,method=method.vgene,sd.n=sd.n,assay.name=assay.name)
@@ -1125,6 +1165,8 @@ ssc.run <- function(obj, assay.name="exprs",
 #' @param ylim integer or NULL; only draw points lie in the ragne specified by xlim and ylim (default NULL)
 #' @param size double; points' size. If NULL, infer from number of points (default NULL)
 #' @param brewer.palette character; which palette to use. (default: "YlOrRd")
+#' @param adjB character; batch column of the colData(obj). (default: NULL)
+#' @param clamp integer vector; expression values will be clamped to the range defined by this parameter, such as c(0,15). (default: NULL )
 #' @importFrom SingleCellExperiment colData
 #' @importFrom ggplot2 ggplot aes geom_point scale_colour_manual theme_bw aes_string guides guide_legend coord_cartesian
 #' @importFrom cowplot save_plot plot_grid
@@ -1138,7 +1180,7 @@ ssc.run <- function(obj, assay.name="exprs",
 #' @export
 ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plotDensity=F, colSet=list(),
                           reduced.name="iCor.tsne",reduced.dim=c(1,2),xlim=NULL,ylim=NULL,size=NULL,
-                          brewer.palette="YlOrRd",
+                          brewer.palette="YlOrRd",adjB=NULL,clamp=NULL,
                           out.prefix=NULL,p.ncol=3,width=NA,height=NA,base_aspect_ratio=1.1,peaks=NULL)
 {
   #requireNamespace("ggplot2")
@@ -1190,7 +1232,8 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
                              ncol = if(length(columns)>1) 2 else 1,
                              base_aspect_ratio=base_aspect_ratio)
         }else{
-          print(pp)
+          #print(pp)
+          return(pp)
         }
       }else{
         warning(sprintf("invalidate parameter: colSet. Please check that!"))
@@ -1208,10 +1251,22 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
     if(is.null(names(gene))){
       names(gene) <- gene
     }
-    p <- ggGeneOnTSNE(assay(obj,assay.name),
+
+    dat.onTSNE <- assay(obj,assay.name)[gene,,drop=F]
+    if(!is.null(adjB)){
+        dat.onTSNE <- simple.removeBatchEffect(dat.onTSNE,batch=colData(obj)[[adjB]])
+    }
+    if(!is.null(clamp)){
+        dat.onTSNE[dat.onTSNE<clamp[1]] <- clamp[1]
+        dat.onTSNE[dat.onTSNE>clamp[2]] <- clamp[2]
+    }
+    p <- ggGeneOnTSNE(dat.onTSNE,
                      dat.map,
                      gene,out.prefix,p.ncol=p.ncol,xlim=xlim,ylim=ylim,size=size,width=width,height=height)
-    if(is.null(out.prefix)){ print(p) }
+    if(is.null(out.prefix)){ 
+        #print(p) 
+        return(p) 
+    }
   }
   if(plotDensity){
     if(is.null(out.prefix)){
@@ -1231,10 +1286,11 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
 #' @param gene character; genes to be showed. (default: NULL)
 #' @param columns character; columns in colData(obj) to be showd. (default: NULL)
 #' @param group.var character; column in the colData(obj) used for grouping. (default: "majorCluster")
-#' @param clamp integer vector; expression values will be clamped to the range defined by this parameter. (default: c(0,15))
+#' @param clamp integer vector; expression values will be clamped to the range defined by this parameter. (default: c(0,12))
 #' @param out.prefix character; output prefix. (default: NULL)
 #' @param p.ncol integer; number of columns in the figure layout. (default: 3)
 #' @param base_aspect_ratio numeric; base_aspect_ratio, used for plotting metadata. (default 1.1)
+#' @param adjB character; batch column of the colData(obj). (default: NULL)
 #' @param ... parameter passed to cowplot::save_plot
 #' @importFrom SingleCellExperiment colData
 #' @importFrom ggplot2 ggplot aes geom_violin scale_fill_gradient2 theme_bw theme aes_string facet_grid element_text
@@ -1244,13 +1300,19 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
 #' NULL, colData of obj with names in `columns` will be plot in violin.
 #' @export
 ssc.plot.violin <- function(obj, assay.name="exprs", gene=NULL, columns=NULL,
-                            group.var="majorCluster",clamp=c(0,15),
+                            group.var="majorCluster",clamp=c(0,12),adjB=NULL,
                             out.prefix=NULL,p.ncol=1,base_aspect_ratio=1.1,...)
 {
   requireNamespace("ggplot2")
   requireNamespace("data.table")
   gene <- ssc.displayName2id(obj,display.name = gene)
-  dat.plot <- as.matrix(t(assay(obj,assay.name)[gene,,drop=F]))
+
+  dat.violin <- assay(obj,assay.name)[gene,,drop=F]
+  if(!is.null(adjB)){
+    dat.violin <- simple.removeBatchEffect(dat.violin,batch=colData(obj)[[adjB]])
+  }
+
+  dat.plot <- as.matrix(t(dat.violin))
   colnames(dat.plot) <- ssc.id2displayName(obj,colnames(dat.plot))
   dat.plot.df <- data.table::data.table(sample=rownames(dat.plot),stringsAsFactors = F)
   dat.plot.df <- cbind(dat.plot.df,as.data.frame(colData(obj)[,group.var,drop=F]))
@@ -1318,6 +1380,7 @@ ssc.plot.pca <- function(obj, out.prefix=NULL,p.ncol=2)
 #' @param obj object of \code{singleCellExperiment} class
 #' @param assay.name character; which assay (default: "exprs")
 #' @param group.var character; column in the colData(obj) used for grouping. (default: "majorCluster")
+#' @param batch character; covariate. (default: NULL)
 #' @param assay.bin character; binarized expression assay (default: NULL)
 #' @param out.prefix character; output prefix. (default: NULL)
 #' @param n.cores integer; number of cores used, if NULL it will be determined automatically (default: NULL)
@@ -1332,7 +1395,7 @@ ssc.plot.pca <- function(obj, out.prefix=NULL,p.ncol=2)
 #' @importFrom dplyr inner_join
 #' @details identify marker genes based on aov and AUC.
 #' @export
-ssc.clusterMarkerGene <- function(obj, assay.name="exprs", group.var="majorCluster",
+ssc.clusterMarkerGene <- function(obj, assay.name="exprs", group.var="majorCluster",batch=NULL,
                                   assay.bin=NULL, out.prefix=NULL,n.cores=NULL, do.plot=T,
                                   F.FDR.THRESHOLD=0.01,pairwise.P.THRESHOLD=0.01,pairwise.FC.THRESHOLD=1,
                                   verbose=F)
@@ -1342,6 +1405,10 @@ ssc.clusterMarkerGene <- function(obj, assay.name="exprs", group.var="majorClust
     requireNamespace("dplyr")
 
     clust <- colData(obj)[,group.var]
+    batchV <- NULL
+    if(!is.null(batch)){
+        batchV <- colData(obj)[,batch]
+    }
     if(length(unique(clust))<2 || is.null(obj) || !all(table(clust) > 1)){
         cat("WARN: clusters<2 or no obj provided or not all clusters have more than 1 samples\n")
         return(NULL)
@@ -1392,6 +1459,7 @@ ssc.clusterMarkerGene <- function(obj, assay.name="exprs", group.var="majorClust
     #### diff genes
     .aov.res <- findDEGenesByAOV(xdata = dat.to.test,
                                  xlabel =if(is.numeric(clust)) sprintf("C%s",clust) else clust,
+                                 batch=batchV,
                                  out.prefix=out.prefix,mod=NULL,
                                  F.FDR.THRESHOLD=F.FDR.THRESHOLD,
                                  HSD.FDR.THRESHOLD=pairwise.P.THRESHOLD,
@@ -1483,7 +1551,7 @@ ssc.clusterMarkerGene <- function(obj, assay.name="exprs", group.var="majorClust
 #' @importFrom ComplexHeatmap HeatmapAnnotation Heatmap decorate_annotation
 #' @importFrom circlize colorRamp2
 #' @importFrom gridBase baseViewports
-#' @importFrom grid pushViewport grid.text
+#' @importFrom grid pushViewport grid.text gpar unit
 #' @importFrom RColorBrewer brewer.pal
 #' @details identify marker genes based on aov and AUC.
 #' @export
@@ -1611,7 +1679,8 @@ ssc.plot.heatmap <- function(obj, assay.name="exprs",out.prefix=NULL,
                                  colorRampPalette(exp.palette)(100),
                                  space="LAB"),
                 column_dend_height = unit(6, "cm"), row_dend_width = unit(6, "cm"),
-                column_names_gp = gpar(fontsize = 12*28/max(m,32)),row_names_gp = gpar(fontsize = 10*28/max(n,32)),
+                column_names_gp = grid::gpar(fontsize = 12*28/max(m,32)),
+                row_names_gp = grid::gpar(fontsize = 10*28/max(n,32)),
                 show_heatmap_legend = T, row_names_max_width = unit(10,"cm"),
                 top_annotation_height = top_annotation_height,
                 cluster_columns = FALSE,
@@ -1619,14 +1688,15 @@ ssc.plot.heatmap <- function(obj, assay.name="exprs",out.prefix=NULL,
                 heatmap_legend_param = list(grid_width = unit(0.8, "cm"),
                                             grid_height = unit(0.8, "cm"),
                                             at = seq(z.lo,z.hi,z.step),
-                                            title_gp = gpar(fontsize = 14, fontface = "bold"),
-                                            label_gp = gpar(fontsize = 12), color_bar = "continuous"),
+                                            title_gp = grid::gpar(fontsize = 14, fontface = "bold"),
+                                            label_gp = grid::gpar(fontsize = 12), color_bar = "continuous"),
                 top_annotation = ha.col,...)
     ComplexHeatmap::draw(ht, newpage= FALSE)
     if(!is.null(ha.col)){
         for(i in seq_along(names(ha.col@anno_list))){
           ComplexHeatmap::decorate_annotation(names(ha.col@anno_list)[i],
-                                {grid.text(names(ha.col@anno_list)[i], unit(-4, "mm"),gp=gpar(fontsize=14),just = "right")})
+                                {grid.text(names(ha.col@anno_list)[i], unit(-4, "mm"),
+                                           gp=grid::gpar(fontsize=14),just = "right")})
         }
     }
     if(!is.null(out.prefix)){ dev.off() }
