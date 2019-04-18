@@ -289,6 +289,53 @@ ssc.order <- function(obj,columns.order=NULL,gene.desc=NULL)
     return(obj)
 }
 
+
+#' calculate the average expression of the specified colum
+#' @param obj object of \code{singleCellExperiment} class
+#' @param assay.name character; which assay (default: "exprs")
+#' @param gene character; only consider the specified gnees (default: NULL)
+#' @param columns character; columns in colData(obj) to be averaged. (default: "majorCluster")
+#' @param avg character; average method. can be one of "mean", "diff" . (default: "mean")
+#' @param ret.type character; return type. can be one of "data.melt", "data.cast", "data.mtx". (default: "data.melt")
+#' @importFrom plyr ldply
+#' @importFrom data.table dcast
+#' @details multiple average methods are implemented
+#' @export
+ssc.avg.byColumn <- function(obj,assay.name="exprs",gene=NULL,column="majorCluster",
+                             avg="mean",ret.type="data.melt")
+{
+  if(!group.by %in% colnames(colData(obj))){
+    warning(sprintf("column not in the obj: %s \n",group.by))
+    return(NULL)
+  }
+  if(!is.null(gene)){
+    obj <- obj[gene,]
+  }
+  cls <- sort(unique(colData(obj)[,group.by]))
+  data.melt.df <- ldply(cls,function(x){
+    obj.in <- obj[,colData(obj)[,group.by]==x]
+    avg.in <- NULL
+    avg.in <- rowMeans(assay(obj.in,assay.name))
+    if(avg=="mean"){
+      return(data.frame(geneID=names(avg.in),cls=x,avg=avg.in))
+    }else if (avg=="diff"){
+      obj.out <- obj[,colData(obj)[,group.by]!=x]
+      avg.out <- rowMeans(assay(obj.out,assay.name))
+      return(data.frame(geneID=names(avg.out),cls=x,avg=avg.in-avg.out))
+    }
+  })
+  if(ret.type=="data.melt"){
+    return(data.melt.df)
+  }else if(ret.type=="data.dcast"){
+    dat.df <- dcast(data.melt.df,geneID~cls,value.var="avg")
+  }else if(ret.type=="data.mtx"){
+    dat.df <- dcast(data.melt.df,geneID~cls,value.var="avg")
+    dat.mtx <- as.matrix(dat.df[,-1])
+    rownames(dat.mtx) <- dat.df[,1]
+  }
+}
+
+
 #' calculate the average expression of cells
 #' @param obj object of \code{singleCellExperiment} class
 #' @param assay.name character; which assay (default: "exprs")
@@ -1178,10 +1225,11 @@ ssc.run <- function(obj, assay.name="exprs",
 #' a color mapping for the responding iterm in the `column`; if not specifed, automatically generated color mapping will
 #' be used.
 #' @export
-ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plotDensity=F, colSet=list(),
-                          reduced.name="iCor.tsne",reduced.dim=c(1,2),xlim=NULL,ylim=NULL,size=NULL,
-                          brewer.palette="YlOrRd",adjB=NULL,clamp=NULL,
-                          out.prefix=NULL,p.ncol=3,width=NA,height=NA,base_aspect_ratio=1.1,peaks=NULL)
+ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL,splitBy=NULL,
+                             plotDensity=F, colSet=list(),
+                             reduced.name="iCor.tsne",reduced.dim=c(1,2),xlim=NULL,ylim=NULL,size=NULL,
+                             brewer.palette="YlOrRd",adjB=NULL,clamp=NULL,
+                             out.prefix=NULL,p.ncol=3,width=NA,height=NA,base_aspect_ratio=1.1,peaks=NULL)
 {
   #requireNamespace("ggplot2")
   #requireNamespace("cowplot")
@@ -1203,8 +1251,12 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
                                       names=cc.values)
           }
           dat.plot <- data.frame(sample=rownames(dat.map),stringsAsFactors = F)
-          dat.plot <- as.data.frame(cbind(dat.plot,dat.map,colData(obj)[,cc,drop=F]))
-          colnames(dat.plot) <- c("sample","Dim1","Dim2",cc)
+          if(!is.null(splitBy)){
+            dat.plot <- as.data.frame(cbind(dat.plot,dat.map,colData(obj)[,c(cc,splitBy),drop=F]))
+          }else{
+            dat.plot <- as.data.frame(cbind(dat.plot,dat.map,colData(obj)[,cc,drop=F]))
+          }
+          colnames(dat.plot) <- c("sample","Dim1","Dim2",cc,"splitBy")
           dat.plot <- dat.plot[order(dat.plot[,cc]),]
           npts <- nrow(dat.plot)
           if(is.numeric(dat.plot[,cc])){
@@ -1216,6 +1268,9 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
             geom_point(aes_string(colour=cc),
                        show.legend=if(!is.numeric(dat.plot[,cc]) && nvalues>30) F else NA,
                        size=if(is.null(size)) auto.point.size(npts)*1.1 else size)
+          if(!is.null(splitBy)){
+            p <- p + ggplot2::facet_wrap(~splitBy)
+          }
           if(is.numeric(dat.plot[,cc])){
             p <- p + scale_colour_gradientn(colours = RColorBrewer::brewer.pal(9, brewer.palette))
           }else{
@@ -1254,18 +1309,18 @@ ssc.plot.tsne <- function(obj, assay.name="exprs", gene=NULL, columns=NULL, plot
 
     dat.onTSNE <- assay(obj,assay.name)[gene,,drop=F]
     if(!is.null(adjB)){
-        dat.onTSNE <- simple.removeBatchEffect(dat.onTSNE,batch=colData(obj)[[adjB]])
+      dat.onTSNE <- simple.removeBatchEffect(dat.onTSNE,batch=colData(obj)[[adjB]])
     }
     if(!is.null(clamp)){
-        dat.onTSNE[dat.onTSNE<clamp[1]] <- clamp[1]
-        dat.onTSNE[dat.onTSNE>clamp[2]] <- clamp[2]
+      dat.onTSNE[dat.onTSNE<clamp[1]] <- clamp[1]
+      dat.onTSNE[dat.onTSNE>clamp[2]] <- clamp[2]
     }
     p <- ggGeneOnTSNE(dat.onTSNE,
-                     dat.map,
-                     gene,out.prefix,p.ncol=p.ncol,xlim=xlim,ylim=ylim,size=size,width=width,height=height)
-    if(is.null(out.prefix)){ 
-        #print(p) 
-        return(p) 
+                      dat.map,
+                      gene,out.prefix,p.ncol=p.ncol,xlim=xlim,ylim=ylim,size=size,width=width,height=height)
+    if(is.null(out.prefix)){
+      #print(p)
+      return(p)
     }
   }
   if(plotDensity){
@@ -1701,4 +1756,8 @@ ssc.plot.heatmap <- function(obj, assay.name="exprs",out.prefix=NULL,
     }
     if(!is.null(out.prefix)){ dev.off() }
 }
+
+
+
+
 

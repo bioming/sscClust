@@ -5,11 +5,11 @@
 \title{Plot on tSNE map}
 \usage{
 ssc.plot.tsne(obj, assay.name = "exprs", gene = NULL, columns = NULL,
-  plotDensity = F, colSet = list(), reduced.name = "iCor.tsne",
-  reduced.dim = c(1, 2), xlim = NULL, ylim = NULL, size = NULL,
-  brewer.palette = "YlOrRd", adjB = NULL, clamp = NULL,
-  out.prefix = NULL, p.ncol = 3, width = NA, height = NA,
-  base_aspect_ratio = 1.1, peaks = NULL)
+  splitBy = NULL, plotDensity = F, colSet = list(),
+  reduced.name = "iCor.tsne", reduced.dim = c(1, 2), xlim = NULL,
+  ylim = NULL, size = NULL, brewer.palette = "YlOrRd", adjB = NULL,
+  clamp = NULL, out.prefix = NULL, p.ncol = 3, width = NA,
+  height = NA, base_aspect_ratio = 1.1, peaks = NULL)
 }
 \arguments{
 \item{obj}{object of \code{singleCellExperiment} class}
