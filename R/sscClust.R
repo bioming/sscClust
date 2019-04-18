@@ -301,7 +301,7 @@ ssc.order <- function(obj,columns.order=NULL,gene.desc=NULL)
 #' @importFrom data.table dcast
 #' @details multiple average methods are implemented
 #' @export
-ssc.avg.byColumn <- function(obj,assay.name="exprs",gene=NULL,column="majorCluster",
+ssc.average.cell <- function(obj,assay.name="exprs",gene=NULL,column="majorCluster",
                              avg="mean",ret.type="data.melt")
 {
   if(!group.by %in% colnames(colData(obj))){
@@ -332,34 +332,15 @@ ssc.avg.byColumn <- function(obj,assay.name="exprs",gene=NULL,column="majorClust
     dat.df <- dcast(data.melt.df,geneID~cls,value.var="avg")
     dat.mtx <- as.matrix(dat.df[,-1])
     rownames(dat.mtx) <- dat.df[,1]
+  }else if(ret.type=="sce"){
+    dat.df <- dcast(data.melt.df,geneID~cls,value.var="avg")
+    dat.mtx <- as.matrix(dat.df[,-1])
+    rownames(dat.mtx) <- dat.df[,1]
+    obj.ret <- ssc.build(dat.mtx,assay.name=assay.name)
+    return(obj.ret)
   }
 }
 
-
-#' calculate the average expression of cells
-#' @param obj object of \code{singleCellExperiment} class
-#' @param assay.name character; which assay (default: "exprs")
-#' @param columns character; columns of colData(obj) used for grouping (default: "majorCluster")
-#' @importFrom data.table as.data.table
-#' @export
-ssc.average.cell <- function(obj,assay.name="exprs",columns="majorCluster")
-{
-    requireNamespace("data.table")
-    dat.plot.exp.mtx <- as.matrix(assay(obj,assay.name))
-
-    cell.info <- as.data.table(colData(obj)[columns])
-    cell.info$cellID <- colnames(obj)
-    cell.info.split <- split(cell.info,by=columns,sorted=T)
-    dat.plot.exp.ave.mtx <- sapply(names(cell.info.split),function(x){
-                apply(dat.plot.exp.mtx[,cell.info.split[[x]][["cellID"]],drop=F],1,mean)
-            })
-    obj.ret <- ssc.build(dat.plot.exp.ave.mtx,display.name=rowData(obj)$display.name,assay.name=assay.name)
-    cDat <- ldply(cell.info.split,function(x){x[1,..columns]})
-    rownames(cDat) <- cDat$.id
-    cDat <- cDat[,columns,drop=F]
-    colData(obj.ret) <- DataFrame(cDat)
-    return(obj.ret)
-}
 
 #' scale the assay per gene
 #' @param obj object of \code{singleCellExperiment} class
