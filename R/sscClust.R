@@ -304,8 +304,8 @@ ssc.order <- function(obj,columns.order=NULL,gene.desc=NULL)
 ssc.average.cell <- function(obj,assay.name="exprs",gene=NULL,column="majorCluster",
                              avg="mean",ret.type="data.melt")
 {
-  if(!group.by %in% colnames(colData(obj))){
-    warning(sprintf("column not in the obj: %s \n",group.by))
+  if(!column %in% colnames(colData(obj))){
+    warning(sprintf("column not in the obj: %s \n",column))
     return(NULL)
   }
   if(!is.null(gene)){
@@ -317,11 +317,13 @@ ssc.average.cell <- function(obj,assay.name="exprs",gene=NULL,column="majorClust
     avg.in <- NULL
     avg.in <- rowMeans(assay(obj.in,assay.name))
     if(avg=="mean"){
-      return(data.frame(geneID=names(avg.in),cls=x,avg=avg.in))
+      return(data.frame(geneID=names(avg.in),cls=x,avg=avg.in,
+                        stringsAsFactors = F))
     }else if (avg=="diff"){
       obj.out <- obj[,colData(obj)[,column]!=x]
       avg.out <- rowMeans(assay(obj.out,assay.name))
-      return(data.frame(geneID=names(avg.out),cls=x,avg=avg.in-avg.out))
+      return(data.frame(geneID=names(avg.out),cls=x,avg=avg.in-avg.out,
+                        stringsAsFactors = F))
     }
   })
   if(ret.type=="data.melt"){
