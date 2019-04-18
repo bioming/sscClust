@@ -14,11 +14,11 @@ ssc.average.cell(obj, assay.name = "exprs", gene = NULL,
 
 \item{gene}{character; only consider the specified gnees (default: NULL)}
 
+\item{column}{character; columns in colData(obj) to be averaged. (default: "majorCluster")}
+
 \item{avg}{character; average method. can be one of "mean", "diff" . (default: "mean")}
 
 \item{ret.type}{character; return type. can be one of "data.melt", "data.cast", "data.mtx". (default: "data.melt")}
-
-\item{columns}{character; columns in colData(obj) to be averaged. (default: "majorCluster")}
 }
 \description{
 calculate the average expression of the specified colum

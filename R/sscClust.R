@@ -294,7 +294,7 @@ ssc.order <- function(obj,columns.order=NULL,gene.desc=NULL)
 #' @param obj object of \code{singleCellExperiment} class
 #' @param assay.name character; which assay (default: "exprs")
 #' @param gene character; only consider the specified gnees (default: NULL)
-#' @param columns character; columns in colData(obj) to be averaged. (default: "majorCluster")
+#' @param column character; columns in colData(obj) to be averaged. (default: "majorCluster")
 #' @param avg character; average method. can be one of "mean", "diff" . (default: "mean")
 #' @param ret.type character; return type. can be one of "data.melt", "data.cast", "data.mtx". (default: "data.melt")
 #' @importFrom plyr ldply
@@ -311,15 +311,15 @@ ssc.average.cell <- function(obj,assay.name="exprs",gene=NULL,column="majorClust
   if(!is.null(gene)){
     obj <- obj[gene,]
   }
-  cls <- sort(unique(colData(obj)[,group.by]))
+  cls <- sort(unique(colData(obj)[,column]))
   data.melt.df <- ldply(cls,function(x){
-    obj.in <- obj[,colData(obj)[,group.by]==x]
+    obj.in <- obj[,colData(obj)[,column]==x]
     avg.in <- NULL
     avg.in <- rowMeans(assay(obj.in,assay.name))
     if(avg=="mean"){
       return(data.frame(geneID=names(avg.in),cls=x,avg=avg.in))
     }else if (avg=="diff"){
-      obj.out <- obj[,colData(obj)[,group.by]!=x]
+      obj.out <- obj[,colData(obj)[,column]!=x]
       avg.out <- rowMeans(assay(obj.out,assay.name))
       return(data.frame(geneID=names(avg.out),cls=x,avg=avg.in-avg.out))
     }
